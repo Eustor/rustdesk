@@ -1,0 +1,136 @@
+name: Build Windows - Versões Customizadas
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versão do build (ex: 1.0.0)'
+        required: true
+        default: '1.0.0'
+      build_target:
+        description: 'Qual versão compilar'
+        required: true
+        type: choice
+        options:
+          - todas
+          - tecnico
+          - go-system
+          - origem
+          - host
+          - cdl
+
+env:
+  FLUTTER_VERSION: '3.19.6'
+  RUST_TOOLCHAIN: stable
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          TARGET="${{ github.event.inputs.build_target }}"
+          if [ "$TARGET" = "todas" ]; then
+            echo 'matrix=["tecnico","go-system","origem","host","cdl"]' >> $GITHUB_OUTPUT
+          else
+            echo "matrix=[\"$TARGET\"]" >> $GITHUB_OUTPUT
+          fi
+
+  build:
+    needs: prepare
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        config: ${{ fromJson(needs.prepare.outputs.matrix) }}
+
+    steps:
+      - name: Checkout RustDesk (seu fork)
+        uses: actions/checkout@v4
+
+      - name: Checkout build configs (repositório do manager)
+        uses: actions/checkout@v4
+        with:
+          repository: Eustor/ferramenta-acesso-remoto
+          path: build-configs
+          # Se o repo for privado, adicione um token:
+          # token: ${{ secrets.BUILD_REPO_TOKEN }}
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Aplicar patches de customização
+        run: |
+          python build-configs/build/apply_patches.py build-configs/build/configs/${{ matrix.config }}.json
+
+      - name: Instalar Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Instalar Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Instalar LLVM
+        run: choco install llvm -y --version=15.0.7
+
+      - name: Configurar vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg --depth=1
+          .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+          echo "VCPKG_ROOT=${{ github.workspace }}\vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: vcpkg/installed
+          key: vcpkg-windows-${{ hashFiles('**/vcpkg.json') }}
+
+      - name: Instalar dependências vcpkg
+        run: |
+          .\vcpkg\vcpkg install libvpx:x64-windows-static libyuv:x64-windows-static opus:x64-windows-static aom:x64-windows-static
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}\vcpkg
+
+      - name: Instalar dependências Python do build
+        run: pip install toml
+
+      - name: Build (portable)
+        run: |
+          python build.py --portable --hwcodec
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}\vcpkg
+
+      - name: Renomear executável com nome da versão
+        run: |
+          $config = Get-Content "build-configs/build/configs/${{ matrix.config }}.json" | ConvertFrom-Json
+          $appName = $config.app_name -replace ' ', '-'
+          $version = "${{ github.event.inputs.version }}"
+
+          # Renomeia o portable
+          Get-ChildItem -Path "target/release" -Filter "*portable*.exe" |
+            Rename-Item -NewName "$appName-$version-portable.exe"
+
+          # Renomeia o installer se existir
+          Get-ChildItem -Path "target/release" -Filter "*setup*.exe" |
+            Rename-Item -NewName "$appName-$version-setup.exe" -ErrorAction SilentlyContinue
+
+      - name: Upload artefatos
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.config }}-v${{ github.event.inputs.version }}
+          path: |
+            target/release/*portable*.exe
+            target/release/*setup*.exe
+          retention-days: 30
