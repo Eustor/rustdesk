@@ -82,8 +82,14 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Instalar LLVM
-        run: choco install llvm -y --version=15.0.7
+      - name: Verificar LLVM
+        run: |
+          $llvm = Get-Command clang -ErrorAction SilentlyContinue
+          if ($llvm) {
+            Write-Host "LLVM já instalado: $(clang --version)"
+          } else {
+            choco install llvm -y
+          }
 
       - name: Configurar vcpkg
         run: |
