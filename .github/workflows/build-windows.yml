@@ -21,7 +21,6 @@ on:
 
 env:
   FLUTTER_VERSION: '3.19.6'
-  RUST_TOOLCHAIN: stable
 
 jobs:
   prepare:
@@ -47,15 +46,14 @@ jobs:
         config: ${{ fromJson(needs.prepare.outputs.matrix) }}
 
     steps:
-      - name: Checkout RustDesk (seu fork)
+      - name: Checkout RustDesk
         uses: actions/checkout@v4
 
-      - name: Checkout build configs (repositório do manager)
+      - name: Checkout build configs
         uses: actions/checkout@v4
         with:
           repository: Eustor/ferramenta-acesso-remoto
           path: build-configs
-          # Se o repo for privado, adicione um token:
           token: ${{ secrets.BUILD_REPO_TOKEN }}
 
       - name: Configurar Python
@@ -64,8 +62,7 @@ jobs:
           python-version: '3.11'
 
       - name: Aplicar patches de customização
-        run: |
-          python build-configs/build/apply_patches.py build-configs/build/configs/${{ matrix.config }}.json
+        run: python build-configs/build/apply_patches.py build-configs/build/configs/${{ matrix.config }}.json
 
       - name: Instalar Rust
         uses: dtolnay/rust-toolchain@stable
@@ -84,8 +81,7 @@ jobs:
 
       - name: Verificar LLVM
         run: |
-          $llvm = Get-Command clang -ErrorAction SilentlyContinue
-          if ($llvm) {
+          if (Get-Command clang -ErrorAction SilentlyContinue) {
             Write-Host "LLVM já instalado: $(clang --version)"
           } else {
             choco install llvm -y
@@ -104,31 +100,25 @@ jobs:
           key: vcpkg-windows-${{ hashFiles('**/vcpkg.json') }}
 
       - name: Instalar dependências vcpkg
-        run: |
-          .\vcpkg\vcpkg install --triplet x64-windows-static
+        run: .\vcpkg\vcpkg install
         env:
           VCPKG_ROOT: ${{ github.workspace }}\vcpkg
 
       - name: Instalar dependências Python do build
         run: pip install toml
 
-      - name: Build (portable)
-        run: |
-          python build.py --portable --hwcodec
+      - name: Build
+        run: python build.py --portable --hwcodec
         env:
           VCPKG_ROOT: ${{ github.workspace }}\vcpkg
 
-      - name: Renomear executável com nome da versão
+      - name: Renomear executável
         run: |
           $config = Get-Content "build-configs/build/configs/${{ matrix.config }}.json" | ConvertFrom-Json
           $appName = $config.app_name -replace ' ', '-'
           $version = "${{ github.event.inputs.version }}"
-
-          # Renomeia o portable
           Get-ChildItem -Path "target/release" -Filter "*portable*.exe" |
             Rename-Item -NewName "$appName-$version-portable.exe"
-
-          # Renomeia o installer se existir
           Get-ChildItem -Path "target/release" -Filter "*setup*.exe" |
             Rename-Item -NewName "$appName-$version-setup.exe" -ErrorAction SilentlyContinue
 
