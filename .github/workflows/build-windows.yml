@@ -105,7 +105,7 @@ jobs:
 
       - name: Instalar dependências vcpkg
         run: |
-          .\vcpkg\vcpkg install libvpx:x64-windows-static libyuv:x64-windows-static opus:x64-windows-static aom:x64-windows-static
+          .\vcpkg\vcpkg install --triplet x64-windows-static
         env:
           VCPKG_ROOT: ${{ github.workspace }}\vcpkg
 
