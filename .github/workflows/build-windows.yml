@@ -56,7 +56,7 @@ jobs:
           repository: Eustor/ferramenta-acesso-remoto
           path: build-configs
           # Se o repo for privado, adicione um token:
-          # token: ${{ secrets.BUILD_REPO_TOKEN }}
+          token: ${{ secrets.BUILD_REPO_TOKEN }}
 
       - name: Configurar Python
         uses: actions/setup-python@v5
