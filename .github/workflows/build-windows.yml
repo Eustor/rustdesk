@@ -102,8 +102,36 @@ jobs:
       - name: Instalar dependências Python do build
         run: pip install toml
 
-      - name: Build
+      - name: Build Rust (gera bridge e installer; Flutter pode falhar aqui)
         run: python build.py --portable
+        continue-on-error: true
+
+      - name: Flutter pub get
+        working-directory: flutter
+        run: flutter pub get
+
+      - name: Flutter build Windows
+        working-directory: flutter
+        run: flutter build windows --release
+
+      - name: Gerar portable
+        run: |
+          New-Item -ItemType Directory -Force -Path resources
+
+          $out = "flutter\build\windows\x64\runner\Release"
+          if (-not (Test-Path $out)) { $out = "flutter\build\windows\runner\Release" }
+          Copy-Item "$out\*" resources -Recurse -Force
+
+          $inst = Get-ChildItem "target\release" -Filter "*install*.exe" | Select-Object -First 1
+          if (-not $inst) { Write-Error "Installer nao encontrado em target\release"; exit 1 }
+          Copy-Item $inst.FullName resources\
+
+          Push-Location libs\portable
+          python3 generate.py -f ..\..\resources -o . -e "..\..\resources\$($inst.Name)"
+          Get-ChildItem "." -Filter "*.exe" | ForEach-Object {
+            Copy-Item $_.FullName ..\..\target\release\
+          }
+          Pop-Location
 
       - name: Renomear executável
         run: |
@@ -112,7 +140,7 @@ jobs:
           $version = "${{ github.event.inputs.version }}"
           Get-ChildItem -Path "target/release" -Filter "*portable*.exe" |
             Rename-Item -NewName "$appName-$version-portable.exe"
-          Get-ChildItem -Path "target/release" -Filter "*setup*.exe" |
+          Get-ChildItem -Path "target/release" -Filter "*install*.exe","*setup*.exe" |
             Rename-Item -NewName "$appName-$version-setup.exe" -ErrorAction SilentlyContinue
 
       - name: Upload artefatos
