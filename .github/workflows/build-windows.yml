@@ -95,7 +95,8 @@ jobs:
             opus:x64-windows-static `
             libvpx:x64-windows-static `
             libyuv:x64-windows-static `
-            aom:x64-windows-static
+            aom:x64-windows-static `
+            --classic
           echo "VCPKG_ROOT=C:\vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Instalar dependências Python do build
