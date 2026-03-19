@@ -20,7 +20,7 @@ on:
           - cdl
 
 env:
-  FLUTTER_VERSION: '3.19.6'
+  FLUTTER_VERSION: '3.41.5'
 
 jobs:
   prepare:
