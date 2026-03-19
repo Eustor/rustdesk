@@ -89,11 +89,14 @@ jobs:
             choco install llvm -y
           }
 
-      - name: Configurar e instalar vcpkg
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgDirectory: '${{ github.workspace }}/vcpkg'
-          vcpkgJsonGlob: 'vcpkg.json'
+      - name: Instalar dependências vcpkg (x64-windows-static)
+        run: |
+          C:\vcpkg\vcpkg install `
+            opus:x64-windows-static `
+            libvpx:x64-windows-static `
+            libyuv:x64-windows-static `
+            aom:x64-windows-static
+          echo "VCPKG_ROOT=C:\vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Instalar dependências Python do build
         run: pip install toml
