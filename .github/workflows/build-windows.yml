@@ -48,6 +48,8 @@ jobs:
     steps:
       - name: Checkout RustDesk
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Checkout build configs
         uses: actions/checkout@v4
