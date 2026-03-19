@@ -104,8 +104,6 @@ jobs:
 
       - name: Build
         run: python build.py --portable
-        env:
-          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
 
       - name: Renomear executável
         run: |
