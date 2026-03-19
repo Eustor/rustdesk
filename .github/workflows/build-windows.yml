@@ -87,22 +87,11 @@ jobs:
             choco install llvm -y
           }
 
-      - name: Configurar vcpkg
-        run: |
-          git clone https://github.com/microsoft/vcpkg --depth=1
-          .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
-          echo "VCPKG_ROOT=${{ github.workspace }}\vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append
-
-      - name: Cache vcpkg
-        uses: actions/cache@v4
+      - name: Configurar e instalar vcpkg
+        uses: lukka/run-vcpkg@v11
         with:
-          path: vcpkg/installed
-          key: vcpkg-windows-${{ hashFiles('**/vcpkg.json') }}
-
-      - name: Instalar dependências vcpkg
-        run: .\vcpkg\vcpkg install
-        env:
-          VCPKG_ROOT: ${{ github.workspace }}\vcpkg
+          vcpkgDirectory: '${{ github.workspace }}/vcpkg'
+          vcpkgJsonGlob: 'vcpkg.json'
 
       - name: Instalar dependências Python do build
         run: pip install toml
@@ -110,7 +99,7 @@ jobs:
       - name: Build
         run: python build.py --portable --hwcodec
         env:
-          VCPKG_ROOT: ${{ github.workspace }}\vcpkg
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
 
       - name: Renomear executável
         run: |
