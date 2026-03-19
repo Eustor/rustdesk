@@ -20,7 +20,7 @@ on:
           - cdl
 
 env:
-  FLUTTER_VERSION: '3.41.5'
+  FLUTTER_VERSION: '3.24.5'
 
 jobs:
   prepare:
@@ -101,14 +101,6 @@ jobs:
 
       - name: Instalar dependências Python do build
         run: pip install toml
-
-      - name: Flutter pub get
-        working-directory: flutter
-        run: flutter pub get
-
-      - name: Flutter build Windows
-        working-directory: flutter
-        run: flutter build windows --release
 
       - name: Build
         run: python build.py --portable
