@@ -99,7 +99,7 @@ jobs:
         run: pip install toml
 
       - name: Build
-        run: python build.py --portable --hwcodec
+        run: python build.py --portable
         env:
           VCPKG_ROOT: ${{ github.workspace }}/vcpkg
 
