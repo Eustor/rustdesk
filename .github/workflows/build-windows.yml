@@ -1,14 +1,14 @@
-name: Build Windows - Versões Customizadas
+name: Build Windows - VersÃµes Customizadas
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Versão do build (ex: 1.0.0)'
+        description: 'VersÃ£o do build (ex: 1.0.0)'
         required: true
         default: '1.0.0'
       build_target:
-        description: 'Qual versão compilar'
+        description: 'Qual versÃ£o compilar'
         required: true
         type: choice
         options:
@@ -63,7 +63,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Aplicar patches de customização
+      - name: Aplicar patches de customizaÃ§Ã£o
         run: python build-configs/build/apply_patches.py build-configs/build/configs/${{ matrix.config }}.json
 
       - name: Instalar Rust
@@ -84,12 +84,12 @@ jobs:
       - name: Verificar LLVM
         run: |
           if (Get-Command clang -ErrorAction SilentlyContinue) {
-            Write-Host "LLVM já instalado: $(clang --version)"
+            Write-Host "LLVM jÃ¡ instalado: $(clang --version)"
           } else {
             choco install llvm -y
           }
 
-      - name: Instalar dependências vcpkg (x64-windows-static)
+      - name: Instalar dependÃªncias vcpkg (x64-windows-static)
         run: |
           C:\vcpkg\vcpkg install `
             opus:x64-windows-static `
@@ -99,12 +99,13 @@ jobs:
             --classic
           echo "VCPKG_ROOT=C:\vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Instalar dependências Python do build
+      - name: Instalar dependÃªncias Python do build
         run: pip install toml
 
-      - name: Build Rust (gera bridge e installer; Flutter pode falhar aqui)
-        run: python build.py --portable
-        continue-on-error: true
+      - name: Build Rust (compila e gera generated_bridge.dart)
+        run: cargo build --release
+        env:
+          VCPKG_ROOT: C:\vcpkg
 
       - name: Flutter pub get
         working-directory: flutter
@@ -122,18 +123,14 @@ jobs:
           if (-not (Test-Path $out)) { $out = "flutter\build\windows\runner\Release" }
           Copy-Item "$out\*" resources -Recurse -Force
 
-          $inst = Get-ChildItem "target\release" -Filter "*install*.exe" | Select-Object -First 1
-          if (-not $inst) { Write-Error "Installer nao encontrado em target\release"; exit 1 }
-          Copy-Item $inst.FullName resources\
-
           Push-Location libs\portable
-          python3 generate.py -f ..\..\resources -o . -e "..\..\resources\$($inst.Name)"
+          python3 generate.py -f ..\..\resources -o .
           Get-ChildItem "." -Filter "*.exe" | ForEach-Object {
             Copy-Item $_.FullName ..\..\target\release\
           }
           Pop-Location
 
-      - name: Renomear executável
+      - name: Renomear executÃ¡vel
         run: |
           $config = Get-Content "build-configs/build/configs/${{ matrix.config }}.json" | ConvertFrom-Json
           $appName = $config.app_name -replace ' ', '-'
