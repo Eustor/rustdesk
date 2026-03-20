@@ -169,7 +169,10 @@ jobs:
           $version = "${{ github.event.inputs.version }}"
           Get-ChildItem -Path "target/release" -Filter "*portable*.exe" |
             Rename-Item -NewName "$appName-$version-portable.exe"
-          Get-ChildItem -Path "target/release" -Filter "*install*.exe","*setup*.exe" |
+          Get-ChildItem -Path "target/release" -Filter "*install*.exe" |
+            Rename-Item -NewName "$appName-$version-setup.exe" -ErrorAction SilentlyContinue
+          Get-ChildItem -Path "target/release" -Filter "*setup*.exe" |
+            Where-Object { $_.Name -notlike "*portable*" } |
             Rename-Item -NewName "$appName-$version-setup.exe" -ErrorAction SilentlyContinue
 
       - name: Upload artefatos
