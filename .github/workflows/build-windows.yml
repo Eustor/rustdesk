@@ -146,40 +146,39 @@ jobs:
         working-directory: flutter
         run: flutter build windows --release
 
-      - name: Gerar portable
-        run: |
-          New-Item -ItemType Directory -Force -Path resources
-
-          $out = "flutter\build\windows\x64\runner\Release"
-          if (-not (Test-Path $out)) { $out = "flutter\build\windows\runner\Release" }
-          Copy-Item "$out\*" resources -Recurse -Force
-
-          Push-Location libs\portable
-          pip install -r requirements.txt
-          python3 generate.py -f ..\..\resources -o .
-          Get-ChildItem "." -Filter "*.exe" | ForEach-Object {
-            Copy-Item $_.FullName ..\..\target\release\
-          }
-          Pop-Location
-
-      - name: Renomear executÃ¡vel
+      - name: Gerar portable (zip com exe + DLLs + data)
         run: |
           $config = Get-Content "build-configs/build/configs/${{ matrix.config }}.json" | ConvertFrom-Json
           $appName = $config.app_name -replace ' ', '-'
           $version = "${{ github.event.inputs.version }}"
-          Get-ChildItem -Path "target/release" -Filter "*portable*.exe" |
-            Rename-Item -NewName "$appName-$version-portable.exe"
-          Get-ChildItem -Path "target/release" -Filter "*install*.exe" |
-            Rename-Item -NewName "$appName-$version-setup.exe" -ErrorAction SilentlyContinue
-          Get-ChildItem -Path "target/release" -Filter "*setup*.exe" |
-            Where-Object { $_.Name -notlike "*portable*" } |
-            Rename-Item -NewName "$appName-$version-setup.exe" -ErrorAction SilentlyContinue
+
+          # Localizar pasta do Flutter build
+          $out = "flutter\build\windows\x64\runner\Release"
+          if (-not (Test-Path $out)) { $out = "flutter\build\windows\runner\Release" }
+          if (-not (Test-Path $out)) { Write-Error "Flutter build output nao encontrado"; exit 1 }
+
+          # Criar pasta temporÃ¡ria com o nome do app
+          $portableDir = "dist\$appName"
+          New-Item -ItemType Directory -Force -Path $portableDir
+          Copy-Item "$out\*" $portableDir -Recurse -Force
+
+          # Renomear o executÃ¡vel principal
+          if (Test-Path "$portableDir\rustdesk.exe") {
+            Rename-Item "$portableDir\rustdesk.exe" "$appName.exe"
+          }
+
+          # Listar conteÃºdo para debug
+          Write-Host "Conteudo do portable:"
+          Get-ChildItem $portableDir -Recurse | Select-Object FullName
+
+          # Compactar tudo em zip
+          $zipPath = "dist\$appName-$version-portable.zip"
+          Compress-Archive -Path "$portableDir\*" -DestinationPath $zipPath
+          Write-Host "ZIP criado: $zipPath ($('{0:N1}' -f ((Get-Item $zipPath).Length / 1MB)) MB)"
 
       - name: Upload artefatos
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.config }}-v${{ github.event.inputs.version }}
-          path: |
-            target/release/*portable*.exe
-            target/release/*setup*.exe
+          path: dist/*-portable.zip
           retention-days: 30
