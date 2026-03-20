@@ -155,6 +155,7 @@ jobs:
           Copy-Item "$out\*" resources -Recurse -Force
 
           Push-Location libs\portable
+          pip install -r requirements.txt
           python3 generate.py -f ..\..\resources -o .
           Get-ChildItem "." -Filter "*.exe" | ForEach-Object {
             Copy-Item $_.FullName ..\..\target\release\
