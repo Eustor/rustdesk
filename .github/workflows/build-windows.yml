@@ -73,6 +73,8 @@ jobs:
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-all-crates: "true"
 
       - name: Instalar Flutter
         uses: subosito/flutter-action@v2
@@ -102,8 +104,37 @@ jobs:
       - name: Instalar dependÃªncias Python do build
         run: pip install toml
 
-      - name: Build Rust (compila e gera generated_bridge.dart)
-        run: cargo build --release
+      - name: Ativar ffigen (requerido pelo flutter_rust_bridge_codegen)
+        run: |
+          dart pub global activate ffigen 5.0.1
+          echo "$env:LOCALAPPDATA\Pub\Cache\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Instalar flutter_rust_bridge_codegen
+        run: |
+          $lock = Get-Content Cargo.lock -Raw
+          if ($lock -match 'name = "flutter_rust_bridge"\r?\nversion = "([^"]+)"') {
+            $fbVersion = $Matches[1]
+            Write-Host "Instalando flutter_rust_bridge_codegen v$fbVersion (do Cargo.lock)"
+          } else {
+            $fbVersion = "1.82.6"
+            Write-Host "AVISO: versÃ£o nÃ£o encontrada no Cargo.lock, usando $fbVersion"
+          }
+          cargo install flutter_rust_bridge_codegen --version $fbVersion
+
+      - name: Gerar generated_bridge.dart
+        run: |
+          flutter_rust_bridge_codegen `
+            --rust-input src/flutter_ffi.rs `
+            --dart-output flutter/lib/generated_bridge.dart
+          # Corrigir assinatura de tipo Bool â†’ Uint8 (compatibilidade ffigen)
+          $f = "flutter/lib/generated_bridge.dart"
+          (Get-Content $f -Raw) `
+            -replace 'ffi\.NativeFunction<ffi\.Bool Function\(DartPort', `
+                     'ffi.NativeFunction<ffi.Uint8 Function(DartPort' |
+            Set-Content $f
+
+      - name: Build Rust lib (compila DLL)
+        run: cargo build --lib --release
         env:
           VCPKG_ROOT: C:\vcpkg
 
