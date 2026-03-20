@@ -138,7 +138,7 @@ jobs:
             Set-Content $f
 
       - name: Build Rust lib (compila DLL)
-        run: cargo build --lib --release
+        run: cargo build --features flutter --lib --release
         env:
           VCPKG_ROOT: C:\vcpkg
 
