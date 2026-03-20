@@ -121,6 +121,10 @@ jobs:
           }
           cargo install flutter_rust_bridge_codegen --version $fbVersion
 
+      - name: Flutter pub get (necessÃ¡rio antes do codegen)
+        working-directory: flutter
+        run: flutter pub get
+
       - name: Gerar generated_bridge.dart
         run: |
           flutter_rust_bridge_codegen `
@@ -137,10 +141,6 @@ jobs:
         run: cargo build --lib --release
         env:
           VCPKG_ROOT: C:\vcpkg
-
-      - name: Flutter pub get
-        working-directory: flutter
-        run: flutter pub get
 
       - name: Flutter build Windows
         working-directory: flutter
