@@ -1,0 +1,309 @@
+name: Build Windows - Versões Customizadas
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versão do build (ex: 1.4.6)'
+        required: true
+        default: '1.4.6'
+      build_target:
+        description: 'Qual versão compilar'
+        required: true
+        type: choice
+        options:
+          - todas
+          - tecnico
+          - go-system
+          - origem
+          - host
+          - cdl
+
+env:
+  FLUTTER_VERSION: '3.24.5'
+  FLUTTER_RUST_BRIDGE_VERSION: '1.80.1'
+  RUST_VERSION: '1.75'
+  LLVM_VERSION: '15.0.6'
+  VCPKG_COMMIT_ID: '120deac3062162151622ca4860575a33844ba10b'
+  CARGO_EXPAND_VERSION: '1.0.95'
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          TARGET="${{ github.event.inputs.build_target }}"
+          if [ "$TARGET" = "todas" ]; then
+            echo 'matrix=["tecnico","go-system","origem","host","cdl"]' >> $GITHUB_OUTPUT
+          else
+            echo "matrix=[\"$TARGET\"]" >> $GITHUB_OUTPUT
+          fi
+
+  generate-bridge:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install prerequisites
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            clang cmake curl gcc git g++ \
+            libclang-dev libgtk-3-dev llvm-dev \
+            nasm ninja-build pkg-config wget
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: "rustfmt"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: bridge
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: "3.22.3"
+          cache: true
+
+      - name: Install bridge dependencies
+        run: |
+          cargo install cargo-expand --version ${{ env.CARGO_EXPAND_VERSION }} --locked
+          cargo install flutter_rust_bridge_codegen --version ${{ env.FLUTTER_RUST_BRIDGE_VERSION }} --features "uuid" --locked
+          cd flutter && flutter pub get && cd ..
+
+      - name: Generate bridge
+        run: |
+          ~/.cargo/bin/flutter_rust_bridge_codegen \
+            --rust-input ./src/flutter_ffi.rs \
+            --dart-output ./flutter/lib/generated_bridge.dart \
+            --c-output ./flutter/macos/Runner/bridge_generated.h
+
+      - name: Upload bridge artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bridge-artifact
+          path: |
+            ./src/bridge_generated.rs
+            ./src/bridge_generated.io.rs
+            ./flutter/lib/generated_bridge.dart
+            ./flutter/lib/generated_bridge.freezed.dart
+
+  build:
+    needs: [prepare, generate-bridge]
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        config: ${{ fromJson(needs.prepare.outputs.matrix) }}
+
+    steps:
+      - name: Checkout RustDesk
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Restore bridge files
+        uses: actions/download-artifact@v4
+        with:
+          name: bridge-artifact
+          path: ./
+
+      - name: Checkout build configs
+        uses: actions/checkout@v4
+        with:
+          repository: Eustor/ferramenta-acesso-remoto
+          path: build-configs
+          token: ${{ secrets.BUILD_REPO_TOKEN }}
+          ref: dev
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v1
+        with:
+          version: ${{ env.LLVM_VERSION }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: x86_64-pc-windows-msvc
+          components: "rustfmt"
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Replace Flutter engine with RustDesk custom engine
+        run: |
+          flutter doctor -v
+          flutter precache --windows
+          Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip
+          Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
+          mv -Force windows-x64-release/* C:/hostedtoolcache/windows/flutter/stable-${{ env.FLUTTER_VERSION }}-x64/bin/cache/artifacts/engine/windows-x64-release/
+
+      - name: Patch Flutter
+        shell: bash
+        run: |
+          if [ -f ".github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff" ]; then
+            cp .github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff $(dirname $(dirname $(which flutter)))
+            cd $(dirname $(dirname $(which flutter)))
+            git apply flutter_3.24.4_dropdown_menu_enableFilter.diff || true
+          fi
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Install vcpkg dependencies
+        shell: bash
+        env:
+          VCPKG_DEFAULT_HOST_TRIPLET: x64-windows-static
+        run: |
+          $VCPKG_ROOT/vcpkg install --triplet x64-windows-static --x-install-root="$VCPKG_ROOT/installed"
+
+      - name: Aplicar patches de customização
+        run: python build-configs/build/apply_patches.py build-configs/build/configs/${{ matrix.config }}.json
+
+      - name: Install Python dependencies
+        run: pip install toml
+
+      - name: Build RustDesk
+        run: |
+          python3 .\build.py --portable --hwcodec --flutter --vram --skip-portable-pack
+
+      - name: Download printer driver
+        run: |
+          try {
+            Invoke-WebRequest -Uri https://github.com/rustdesk/hbb_common/releases/download/driver/printer_driver_adapter.zip -OutFile printer_driver_adapter.zip
+            Expand-Archive printer_driver_adapter.zip -DestinationPath .
+          } catch {
+            Write-Host "Printer driver download failed, skipping..."
+          }
+
+      - name: Gerar portable (zip com exe + DLLs + data)
+        run: |
+          $config = Get-Content "build-configs/build/configs/${{ matrix.config }}.json" | ConvertFrom-Json
+          $appName = $config.app_name -replace ' ', '-'
+          $version = "${{ github.event.inputs.version }}"
+
+          # Localizar pasta do Flutter build
+          $out = "flutter\build\windows\x64\runner\Release"
+          if (-not (Test-Path $out)) { $out = "flutter\build\windows\runner\Release" }
+          if (-not (Test-Path $out)) { Write-Error "Flutter build output nao encontrado"; exit 1 }
+
+          # Criar pasta temporária com o nome do app
+          $portableDir = "dist\$appName"
+          New-Item -ItemType Directory -Force -Path $portableDir
+          Copy-Item "$out\*" $portableDir -Recurse -Force
+
+          # Copiar printer_driver_adapter.dll se existir
+          if (Test-Path "printer_driver_adapter.dll") {
+            Copy-Item "printer_driver_adapter.dll" "$portableDir\"
+            Write-Host "  Printer driver adapter copiado"
+          }
+
+          # Renomear rustdesk.exe para {AppName}.exe
+          $exeName = "$($config.app_name).exe"
+          $srcExe = "$portableDir\rustdesk.exe"
+          $dstExe = "$portableDir\$exeName"
+          if (Test-Path $srcExe) {
+              Rename-Item $srcExe $exeName
+              Write-Host "  Exe renomeado: rustdesk.exe -> $exeName"
+          }
+
+          # Criar configs em data/config/
+          $dataDir = "$portableDir\data\config"
+          if (-not (Test-Path $dataDir)) { New-Item -ItemType Directory -Force -Path $dataDir }
+
+          $key = if ($config.key) { $config.key } else { "" }
+          $apiServer = if ($config.api_server) { $config.api_server } else { "" }
+          $srv = $config.server
+
+          # {AppName}2.toml
+          $toml2Lines = @(
+              "rendezvous_server = '${srv}:21116'"
+              "nat_type = 1"
+              "serial = 0"
+              ""
+              "[options]"
+              "custom-rendezvous-server = '$srv'"
+              "relay-server = '$srv'"
+              "api-server = '$apiServer'"
+              "key = '$key'"
+          )
+          $toml2Content = $toml2Lines -join "`n"
+
+          # {AppName}.toml
+          $toml1Lines = @(
+              "enc_id = ''"
+              "salt = ''"
+              "verification-method = 'use-permanent-password'"
+          )
+          $toml1Content = $toml1Lines -join "`n"
+
+          $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+
+          foreach ($n in @("$($config.app_name)2.toml", "RustDesk2.toml")) {
+              [System.IO.File]::WriteAllText("$dataDir\$n", $toml2Content, $utf8NoBom)
+              Write-Host "  Config servidor: $n"
+          }
+          foreach ($n in @("$($config.app_name).toml", "RustDesk.toml")) {
+              [System.IO.File]::WriteAllText("$dataDir\$n", $toml1Content, $utf8NoBom)
+              Write-Host "  Config base: $n"
+          }
+
+          # Criar Iniciar.bat
+          $batLines = @(
+              '@echo off'
+              "set `"APPNAME=$($config.app_name)`""
+              'set "CFGDIR=%AppData%\%APPNAME%\config"'
+              'if not exist "%CFGDIR%" mkdir "%CFGDIR%"'
+              'copy /Y "%~dp0data\config\%APPNAME%2.toml" "%CFGDIR%\" >nul 2>&1'
+              'copy /Y "%~dp0data\config\%APPNAME%.toml" "%CFGDIR%\" >nul 2>&1'
+              'copy /Y "%~dp0data\config\RustDesk2.toml" "%CFGDIR%\" >nul 2>&1'
+              'copy /Y "%~dp0data\config\RustDesk.toml" "%CFGDIR%\" >nul 2>&1'
+              'echo Configuracoes aplicadas em %CFGDIR%'
+              'echo.'
+              "start `"`" `"%~dp0$exeName`""
+          )
+          $batContent = $batLines -join "`r`n"
+          [System.IO.File]::WriteAllText("$portableDir\Iniciar.bat", $batContent, $utf8NoBom)
+
+          # Listar conteúdo para debug
+          Write-Host "Conteudo do portable:"
+          Get-ChildItem $portableDir -Recurse | Select-Object FullName
+
+          # Compactar
+          $zipPath = "dist\$appName-$version-portable.zip"
+          Compress-Archive -Path "$portableDir\*" -DestinationPath $zipPath
+          Write-Host "ZIP criado: $zipPath ($('{0:N1}' -f ((Get-Item $zipPath).Length / 1MB)) MB)"
+
+      - name: Upload artefatos
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.config }}-v${{ github.event.inputs.version }}
+          path: dist/*-portable.zip
+          retention-days: 30
