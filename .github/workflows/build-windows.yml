@@ -194,7 +194,7 @@ jobs:
         run: python build-configs/build/apply_patches.py build-configs/build/configs/${{ matrix.config }}.json
 
       - name: Install Python dependencies
-        run: pip install toml
+        run: pip install toml brotli
 
       - name: Build RustDesk
         run: |
@@ -207,6 +207,48 @@ jobs:
             Expand-Archive printer_driver_adapter.zip -DestinationPath .
           } catch {
             Write-Host "Printer driver download failed, skipping..."
+          }
+
+      - name: Gerar instalador (self-extracting)
+        run: |
+          $config = Get-Content "build-configs/build/configs/${{ matrix.config }}.json" | ConvertFrom-Json
+          $appName = $config.app_name -replace ' ', '-'
+          $version = "${{ github.event.inputs.version }}"
+
+          # Localizar pasta do Flutter build
+          $out = "flutter\build\windows\x64\runner\Release"
+          if (-not (Test-Path $out)) { $out = "flutter\build\windows\runner\Release" }
+          if (-not (Test-Path $out)) { Write-Error "Flutter build output nao encontrado"; exit 1 }
+
+          # Copiar printer driver para o build output (fica dentro do instalador)
+          if (Test-Path "printer_driver_adapter.dll") {
+            Copy-Item "printer_driver_adapter.dll" "$out\"
+            Write-Host "  Printer driver copiado para build output"
+          }
+
+          # Guardar diretório raiz
+          $root = $PWD.Path
+
+          # Gerar dados compactados e compilar o portable packer
+          Set-Location "$root\libs\portable"
+          if (Test-Path "requirements.txt") {
+            pip3 install -r requirements.txt 2>&1 | Out-Null
+          }
+          python3 generate.py -f "$root\$out" -o . -e "$root\$out\rustdesk.exe"
+          Set-Location $root
+
+          # Mover o instalador para dist/
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $packer = "target\release\rustdesk-portable-packer.exe"
+          if (Test-Path $packer) {
+            $installerName = "$appName-$version-install.exe"
+            Copy-Item $packer "dist\$installerName"
+            $size = '{0:N1}' -f ((Get-Item "dist\$installerName").Length / 1MB)
+            Write-Host "Instalador criado: dist\$installerName ($size MB)"
+          } else {
+            Write-Host "AVISO: rustdesk-portable-packer.exe nao encontrado"
+            Write-Host "Arquivos em target\release\:"
+            Get-ChildItem target\release\*.exe -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $($_.Name)" }
           }
 
       - name: Gerar portable (zip com exe + DLLs + data)
@@ -311,5 +353,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.config }}-v${{ github.event.inputs.version }}
-          path: dist/*-portable.zip
+          path: |
+            dist/*-portable.zip
+            dist/*-install.exe
           retention-days: 30
