@@ -226,6 +226,15 @@ jobs:
             Write-Host "  Printer driver copiado para build output"
           }
 
+          # Renomear rustdesk.exe para {AppName}.exe antes de empacotar.
+          # O install_me() usa XCOPY (preserva nomes), então o exe precisa já
+          # ter o nome certo para o atalho funcionar após instalar.
+          $exeAppName = "$($config.app_name).exe"
+          if (Test-Path "$out\rustdesk.exe") {
+            Rename-Item "$out\rustdesk.exe" $exeAppName
+            Write-Host "  Exe renomeado: rustdesk.exe -> $exeAppName"
+          }
+
           # Guardar diretório raiz
           $root = $PWD.Path
 
@@ -234,7 +243,7 @@ jobs:
           if (Test-Path "requirements.txt") {
             pip3 install -r requirements.txt 2>&1 | Out-Null
           }
-          python3 generate.py -f "$root\$out" -o . -e "$root\$out\rustdesk.exe"
+          python3 generate.py -f "$root\$out" -o . -e "$root\$out\$exeAppName"
           Set-Location $root
 
           # Mover o instalador para dist/
@@ -273,14 +282,8 @@ jobs:
             Write-Host "  Printer driver adapter copiado"
           }
 
-          # Renomear rustdesk.exe para {AppName}.exe
+          # O exe já foi renomeado para {AppName}.exe no step do instalador
           $exeName = "$($config.app_name).exe"
-          $srcExe = "$portableDir\rustdesk.exe"
-          $dstExe = "$portableDir\$exeName"
-          if (Test-Path $srcExe) {
-              Rename-Item $srcExe $exeName
-              Write-Host "  Exe renomeado: rustdesk.exe -> $exeName"
-          }
 
           # Criar configs em data/config/
           $dataDir = "$portableDir\data\config"
