@@ -235,65 +235,16 @@ jobs:
             Write-Host "  Exe renomeado: rustdesk.exe -> $exeAppName"
           }
 
-          # Guardar diretório raiz
-          $root = $PWD.Path
+          # === Criar configs em data/config/ ANTES de chamar generate.py (D-01, D-05) ===
+          $dataDir = "$out\data\config"
+          New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
 
-          # Gerar dados compactados e compilar o portable packer
-          Set-Location "$root\libs\portable"
-          if (Test-Path "requirements.txt") {
-            pip3 install -r requirements.txt 2>&1 | Out-Null
-          }
-          python3 generate.py -f "$root\$out" -o . -e "$root\$out\$exeAppName"
-          Set-Location $root
-
-          # Mover o instalador para dist/
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          $packer = "target\release\rustdesk-portable-packer.exe"
-          if (Test-Path $packer) {
-            $installerName = "$appName-$version-install.exe"
-            Copy-Item $packer "dist\$installerName"
-            $size = '{0:N1}' -f ((Get-Item "dist\$installerName").Length / 1MB)
-            Write-Host "Instalador criado: dist\$installerName ($size MB)"
-          } else {
-            Write-Host "AVISO: rustdesk-portable-packer.exe nao encontrado"
-            Write-Host "Arquivos em target\release\:"
-            Get-ChildItem target\release\*.exe -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $($_.Name)" }
-          }
-
-      - name: Gerar portable (zip com exe + DLLs + data)
-        run: |
-          $config = Get-Content "build-configs/build/configs/${{ matrix.config }}.json" | ConvertFrom-Json
-          $appName = $config.app_name -replace ' ', '-'
-          $version = "${{ github.event.inputs.version }}"
-
-          # Localizar pasta do Flutter build
-          $out = "flutter\build\windows\x64\runner\Release"
-          if (-not (Test-Path $out)) { $out = "flutter\build\windows\runner\Release" }
-          if (-not (Test-Path $out)) { Write-Error "Flutter build output nao encontrado"; exit 1 }
-
-          # Criar pasta temporária com o nome do app
-          $portableDir = "dist\$appName"
-          New-Item -ItemType Directory -Force -Path $portableDir
-          Copy-Item "$out\*" $portableDir -Recurse -Force
-
-          # Copiar printer_driver_adapter.dll se existir
-          if (Test-Path "printer_driver_adapter.dll") {
-            Copy-Item "printer_driver_adapter.dll" "$portableDir\"
-            Write-Host "  Printer driver adapter copiado"
-          }
-
-          # O exe já foi renomeado para {AppName}.exe no step do instalador
-          $exeName = "$($config.app_name).exe"
-
-          # Criar configs em data/config/
-          $dataDir = "$portableDir\data\config"
-          if (-not (Test-Path $dataDir)) { New-Item -ItemType Directory -Force -Path $dataDir }
-
-          $key = if ($config.key) { $config.key } else { "" }
+          $key       = if ($config.key)        { $config.key }        else { "" }
           $apiServer = if ($config.api_server) { $config.api_server } else { "" }
-          $srv = $config.server
+          $srv       = $config.server
+          $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 
-          # {AppName}2.toml
+          # {AppName}2.toml e RustDesk2.toml — configuracao do servidor
           $toml2Lines = @(
               "rendezvous_server = '${srv}:21116'"
               "nat_type = 1"
@@ -307,15 +258,20 @@ jobs:
           )
           $toml2Content = $toml2Lines -join "`n"
 
-          # {AppName}.toml
-          $toml1Lines = @(
+          # {AppName}.toml e RustDesk.toml — configuracao local
+          $toml1Lines = [System.Collections.Generic.List[string]]@(
               "enc_id = ''"
               "salt = ''"
               "verification-method = 'use-permanent-password'"
           )
+          # Injetar senha apenas se permanent_password estiver preenchida (D-01, D-03)
+          if ($config.permanent_password) {
+              $toml1Lines.Add("password = '$($config.permanent_password)'")
+              Write-Host "  Senha permanente configurada"
+          } else {
+              Write-Host "  Sem permanent_password no JSON — campo omitido do TOML"
+          }
           $toml1Content = $toml1Lines -join "`n"
-
-          $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 
           foreach ($n in @("$($config.app_name)2.toml", "RustDesk2.toml")) {
               [System.IO.File]::WriteAllText("$dataDir\$n", $toml2Content, $utf8NoBom)
@@ -323,40 +279,42 @@ jobs:
           }
           foreach ($n in @("$($config.app_name).toml", "RustDesk.toml")) {
               [System.IO.File]::WriteAllText("$dataDir\$n", $toml1Content, $utf8NoBom)
-              Write-Host "  Config base: $n"
+              Write-Host "  Config local: $n"
           }
+          Write-Host "  TOMLs escritos em $dataDir"
+          # === FIM DO BLOCO TOML ===
 
-          # Criar Iniciar.bat
-          $batLines = @(
-              '@echo off'
-              "set `"APPNAME=$($config.app_name)`""
-              'set "CFGDIR=%AppData%\%APPNAME%\config"'
-              'if not exist "%CFGDIR%" mkdir "%CFGDIR%"'
-              'copy /Y "%~dp0data\config\%APPNAME%2.toml" "%CFGDIR%\" >nul 2>&1'
-              'copy /Y "%~dp0data\config\%APPNAME%.toml" "%CFGDIR%\" >nul 2>&1'
-              'copy /Y "%~dp0data\config\RustDesk2.toml" "%CFGDIR%\" >nul 2>&1'
-              'copy /Y "%~dp0data\config\RustDesk.toml" "%CFGDIR%\" >nul 2>&1'
-              'echo Configuracoes aplicadas em %CFGDIR%'
-              'echo.'
-              "start `"`" `"%~dp0$exeName`""
-          )
-          $batContent = $batLines -join "`r`n"
-          [System.IO.File]::WriteAllText("$portableDir\Iniciar.bat", $batContent, $utf8NoBom)
+          # Guardar diretório raiz
+          $root = $PWD.Path
 
-          # Listar conteúdo para debug
-          Write-Host "Conteudo do portable:"
-          Get-ChildItem $portableDir -Recurse | Select-Object FullName
+          # Gerar dados compactados e compilar o portable packer
+          Set-Location "$root\libs\portable"
+          if (Test-Path "requirements.txt") {
+            pip3 install -r requirements.txt 2>&1 | Out-Null
+          }
+          python3 generate.py -f "$root\$out" -o . -e "$root\$out\$exeAppName"
+          Set-Location $root
 
-          # Compactar
-          $zipPath = "dist\$appName-$version-portable.zip"
-          Compress-Archive -Path "$portableDir\*" -DestinationPath $zipPath
-          Write-Host "ZIP criado: $zipPath ($('{0:N1}' -f ((Get-Item $zipPath).Length / 1MB)) MB)"
+          # Mover packer para dist/ com nome final e empacotar em ZIP (D-08, D-10)
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $packer = "target\release\rustdesk-portable-packer.exe"
+          if (Test-Path $packer) {
+              $exeFinal = "$appName-$version.exe"
+              Copy-Item $packer "dist\$exeFinal"
+              $zipPath = "dist\$appName-$version-portable.zip"
+              Compress-Archive -Path "dist\$exeFinal" -DestinationPath $zipPath
+              $size = '{0:N1}' -f ((Get-Item $zipPath).Length / 1MB)
+              Write-Host "Portable criado: $zipPath ($size MB)"
+              Remove-Item "dist\$exeFinal"
+          } else {
+              Write-Error "rustdesk-portable-packer.exe nao encontrado"
+              Get-ChildItem target\release\*.exe -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $($_.Name)" }
+              exit 1
+          }
 
       - name: Upload artefatos
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.config }}-v${{ github.event.inputs.version }}
-          path: |
-            dist/*-portable.zip
-            dist/*-install.exe
+          path: dist/*-portable.zip
           retention-days: 30
