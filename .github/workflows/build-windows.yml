@@ -1,14 +1,14 @@
-name: Build Windows - VersÃµes Customizadas
+name: Build Windows - Versões Customizadas
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'VersÃ£o do build (ex: 1.4.6)'
+        description: 'Versão do build (ex: 1.4.6)'
         required: true
         default: '1.4.6'
       build_target:
-        description: 'Qual versÃ£o compilar'
+        description: 'Qual versão compilar'
         required: true
         type: choice
         options:
@@ -190,7 +190,7 @@ jobs:
         run: |
           $VCPKG_ROOT/vcpkg install --triplet x64-windows-static --x-install-root="$VCPKG_ROOT/installed"
 
-      - name: Aplicar patches de customizaÃ§Ã£o
+      - name: Aplicar patches de customização
         run: python build-configs/build/apply_patches.py build-configs/build/configs/${{ matrix.config }}.json
 
       - name: Install Python dependencies
@@ -227,8 +227,8 @@ jobs:
           }
 
           # Renomear rustdesk.exe para {AppName}.exe antes de empacotar.
-          # O install_me() usa XCOPY (preserva nomes), entÃ£o o exe precisa jÃ¡
-          # ter o nome certo para o atalho funcionar apÃ³s instalar.
+          # O install_me() usa XCOPY (preserva nomes), então o exe precisa já
+          # ter o nome certo para o atalho funcionar após instalar.
           $exeAppName = "$($config.app_name).exe"
           if (Test-Path "$out\rustdesk.exe") {
             Rename-Item "$out\rustdesk.exe" $exeAppName
@@ -244,7 +244,7 @@ jobs:
           $srv       = $config.server
           $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 
-          # {AppName}2.toml e RustDesk2.toml â€” configuracao do servidor
+          # {AppName}2.toml e RustDesk2.toml — configuracao do servidor
           $toml2Lines = @(
               "rendezvous_server = '${srv}:21116'"
               "nat_type = 1"
@@ -258,7 +258,7 @@ jobs:
           )
           $toml2Content = $toml2Lines -join "`n"
 
-          # {AppName}.toml e RustDesk.toml â€” configuracao local
+          # {AppName}.toml e RustDesk.toml — configuracao local
           $toml1Lines = [System.Collections.Generic.List[string]]@(
               "enc_id = ''"
               "salt = ''"
@@ -269,7 +269,7 @@ jobs:
               $toml1Lines.Add("password = '$($config.permanent_password)'")
               Write-Host "  Senha permanente configurada"
           } else {
-              Write-Host "  Sem permanent_password no JSON â€” campo omitido do TOML"
+              Write-Host "  Sem permanent_password no JSON — campo omitido do TOML"
           }
           $toml1Content = $toml1Lines -join "`n"
 
@@ -284,7 +284,7 @@ jobs:
           Write-Host "  TOMLs escritos em $dataDir"
           # === FIM DO BLOCO TOML ===
 
-          # Guardar diretÃ³rio raiz
+          # Guardar diretório raiz
           $root = $PWD.Path
 
           # Gerar dados compactados e compilar o portable packer
@@ -304,7 +304,7 @@ jobs:
               $zipPath = "dist\$appName-$version-portable.zip"
               Compress-Archive -Path "dist\$exeFinal" -DestinationPath $zipPath
               $size = '{0:N1}' -f ((Get-Item $zipPath).Length / 1MB)
-              Write-Host "Portable criado: $zipPath ($size MB)"
+              Write-Host "Portable criado: $zipPath ($($size) MB)"
               Remove-Item "dist\$exeFinal"
           } else {
               Write-Error "rustdesk-portable-packer.exe nao encontrado"
