@@ -1,14 +1,14 @@
-name: Build Windows - Versões Customizadas
+name: Build Windows - VersÃµes Customizadas
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Versão do build (ex: 1.4.6)'
+        description: 'VersÃ£o do build (ex: 1.4.6)'
         required: true
         default: '1.4.6'
       build_target:
-        description: 'Qual versão compilar'
+        description: 'Qual versÃ£o compilar'
         required: true
         type: choice
         options:
@@ -190,7 +190,7 @@ jobs:
         run: |
           $VCPKG_ROOT/vcpkg install --triplet x64-windows-static --x-install-root="$VCPKG_ROOT/installed"
 
-      - name: Aplicar patches de customização
+      - name: Aplicar patches de customizaÃ§Ã£o
         run: python build-configs/build/apply_patches.py build-configs/build/configs/${{ matrix.config }}.json
 
       - name: Install Python dependencies
@@ -227,8 +227,8 @@ jobs:
           }
 
           # Renomear rustdesk.exe para {AppName}.exe antes de empacotar.
-          # O install_me() usa XCOPY (preserva nomes), então o exe precisa já
-          # ter o nome certo para o atalho funcionar após instalar.
+          # O install_me() usa XCOPY (preserva nomes), entÃ£o o exe precisa jÃ¡
+          # ter o nome certo para o atalho funcionar apÃ³s instalar.
           $exeAppName = "$($config.app_name).exe"
           if (Test-Path "$out\rustdesk.exe") {
             Rename-Item "$out\rustdesk.exe" $exeAppName
@@ -244,7 +244,7 @@ jobs:
           $srv       = $config.server
           $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 
-          # {AppName}2.toml e RustDesk2.toml — configuracao do servidor
+          # {AppName}2.toml e RustDesk2.toml â€” configuracao do servidor
           $toml2Lines = @(
               "rendezvous_server = '${srv}:21116'"
               "nat_type = 1"
@@ -258,7 +258,7 @@ jobs:
           )
           $toml2Content = $toml2Lines -join "`n"
 
-          # {AppName}.toml e RustDesk.toml — configuracao local
+          # {AppName}.toml e RustDesk.toml â€” configuracao local
           $toml1Lines = [System.Collections.Generic.List[string]]@(
               "enc_id = ''"
               "salt = ''"
@@ -269,7 +269,7 @@ jobs:
               $toml1Lines.Add("password = '$($config.permanent_password)'")
               Write-Host "  Senha permanente configurada"
           } else {
-              Write-Host "  Sem permanent_password no JSON — campo omitido do TOML"
+              Write-Host "  Sem permanent_password no JSON â€” campo omitido do TOML"
           }
           $toml1Content = $toml1Lines -join "`n"
 
@@ -284,62 +284,33 @@ jobs:
           Write-Host "  TOMLs escritos em $dataDir"
           # === FIM DO BLOCO TOML ===
 
-          Write-Host "  TOMLs prontos em $dataDir — aguardando step Gerar portable"
+          # Guardar diretÃ³rio raiz
+          $root = $PWD.Path
 
-      - name: Gerar portable (zip com exe + DLLs + configs)
-        run: |
-          $config = Get-Content "build-configs/build/configs/${{ matrix.config }}.json" | ConvertFrom-Json
-          $appName = $config.app_name -replace ' ', '-'
-          $version = "${{ github.event.inputs.version }}"
-
-          # Localizar pasta do Flutter build
-          $out = "flutter\build\windows\x64\runner\Release"
-          if (-not (Test-Path $out)) { $out = "flutter\build\windows\runner\Release" }
-          if (-not (Test-Path $out)) { Write-Error "Flutter build output nao encontrado"; exit 1 }
-
-          # Criar pasta temporaria com o nome do app
-          $portableDir = "dist\$appName"
-          New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
-          # Copia tudo do build output (inclui exe renomeado + data\config\ com TOMLs e senha)
-          Copy-Item "$out\*" $portableDir -Recurse -Force
-          Write-Host "  Arquivos copiados para: $portableDir"
-
-          # Garantir printer driver (ja deve estar em $out, mas por seguranca)
-          if ((Test-Path "printer_driver_adapter.dll") -and (-not (Test-Path "$portableDir\printer_driver_adapter.dll"))) {
-              Copy-Item "printer_driver_adapter.dll" "$portableDir\"
-              Write-Host "  Printer driver copiado"
+          # Gerar dados compactados e compilar o portable packer
+          Set-Location "$root\libs\portable"
+          if (Test-Path "requirements.txt") {
+            pip3 install -r requirements.txt 2>&1 | Out-Null
           }
+          python3 generate.py -f "$root\$out" -o . -e "$root\$out\$exeAppName"
+          Set-Location $root
 
-          # Nome do exe (ja foi renomeado no step anterior)
-          $exeName = "$($config.app_name).exe"
-          $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-
-          # Criar Iniciar.bat — copia TOMLs para AppData\Roaming e lanca o exe
-          $batLines = @(
-              '@echo off'
-              "set `"APPNAME=$($config.app_name)`""
-              'set "CFGDIR=%AppData%\%APPNAME%\config"'
-              'if not exist "%CFGDIR%" mkdir "%CFGDIR%"'
-              'copy /Y "%~dp0data\config\%APPNAME%2.toml" "%CFGDIR%\" >nul 2>&1'
-              'copy /Y "%~dp0data\config\%APPNAME%.toml" "%CFGDIR%\" >nul 2>&1'
-              'copy /Y "%~dp0data\config\RustDesk2.toml" "%CFGDIR%\" >nul 2>&1'
-              'copy /Y "%~dp0data\config\RustDesk.toml" "%CFGDIR%\" >nul 2>&1'
-              'echo Configuracoes aplicadas em %CFGDIR%'
-              'echo.'
-              "start `"`" `"%~dp0$exeName`""
-          )
-          $batContent = $batLines -join "`r`n"
-          [System.IO.File]::WriteAllText("$portableDir\Iniciar.bat", $batContent, $utf8NoBom)
-          Write-Host "  Iniciar.bat criado"
-
-          # Criar ZIP do portable
-          $zipPath = "dist\$appName-$version-portable.zip"
-          Compress-Archive -Path "$portableDir\*" -DestinationPath $zipPath
-          $size = '{0:N1}' -f ((Get-Item $zipPath).Length / 1MB)
-          Write-Host "  ZIP criado: $zipPath ($size MB)"
-
-          # Remover pasta temporaria
-          Remove-Item $portableDir -Recurse -Force
+          # Mover packer para dist/ com nome final e empacotar em ZIP (D-08, D-10)
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $packer = "target\release\rustdesk-portable-packer.exe"
+          if (Test-Path $packer) {
+              $exeFinal = "$appName-$version.exe"
+              Copy-Item $packer "dist\$exeFinal"
+              $zipPath = "dist\$appName-$version-portable.zip"
+              Compress-Archive -Path "dist\$exeFinal" -DestinationPath $zipPath
+              $size = '{0:N1}' -f ((Get-Item $zipPath).Length / 1MB)
+              Write-Host "Portable criado: $zipPath ($size MB)"
+              Remove-Item "dist\$exeFinal"
+          } else {
+              Write-Error "rustdesk-portable-packer.exe nao encontrado"
+              Get-ChildItem target\release\*.exe -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $($_.Name)" }
+              exit 1
+          }
 
       - name: Upload artefatos
         uses: actions/upload-artifact@v4
