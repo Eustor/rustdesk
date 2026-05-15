@@ -124,7 +124,7 @@ jobs:
           repository: Eustor/ferramenta-acesso-remoto
           path: build-configs
           token: ${{ secrets.BUILD_REPO_TOKEN }}
-          ref: dev
+          ref: main
 
       - name: Configurar Python
         uses: actions/setup-python@v5
